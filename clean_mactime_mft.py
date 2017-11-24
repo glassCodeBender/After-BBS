@@ -3,18 +3,12 @@
 @Date: 11/23/2007
 @Version: 1.0
 
-Program Purpose: This program helps forensic practitioners filter a Master File Table dumped into a csv file by mactime 
-to only include the most useful file extensions, directories, or occurrences of certain viruses. 
+Program Purpose: This program helps forensic practitioners filter a Master File Table dumped into a csv file by mactime
+to only include the most useful file extensions, directories, or occurrences of certain viruses.
 
-The program (hopefully) creates multiple csvs based on different filters. Eventually I'll add filters for lnk 
-and prefetch files. I'll also write a filter to search for compilers.
+I'll
 
-I don't plan on making the program easy for others to use (argparse already wasted too much of my time)
-
-NOTE: This program was written with python 3.6. If you are using this after volatility was run, you'll need to 
-switch environments.
-
-Example Usage: 
+Example Usage:
 ~$ python clean_mactime_mft.py filename_to_read.csv output_filename.csv
 
 """
@@ -23,6 +17,7 @@ import pandas as pd
 import re
 import sys
 import os
+import argparse
 
 if len(sys.argv) != 2:
     print("You must include a filename to read and filename to output to for this program to work. ")
@@ -71,7 +66,7 @@ def run():
     filter_by_extension(df)
     # if reg_file:
     #   df = filter_by_extension(df)
- 
+
     if sdate or edate or stime or etime:
         filter_by_dates(df)
     if suspicious:
@@ -122,6 +117,7 @@ Filters a MFT csv file that was converted into a DataFrame to only include relev
 
 
 def filter_by_extension(df):
+
     user_reg = ''
 
     if reg_file:
@@ -131,7 +127,7 @@ def filter_by_extension(df):
     if user_reg:
         pattern = r'' + user_reg
     else:
-        pattern = r'.exe|.rar|.sys|.jar|.pref|.lnk'
+        pattern = r'\.exe|\.rar|\.sys|\.jar|\.pref|\.lnk|\.bat'
 
     regex1 = re.compile(pattern, flags=re.IGNORECASE)
     df['mask'] = df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
@@ -159,29 +155,34 @@ included in the table.
 """
 def filter_suspicious(df):
 
+    new_df = df.copy()
     pattern = r'^.+(Program\sFiles|System32).+[.exe]$'
     regex1 = re.compile(pattern)
-    df['mask'] = df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
-    filt_df = df[df['mask'] == False]
+    new_df['mask'] = new_df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
+    new_df = new_df[new_df['mask'] == False]
 
     pattern2 = r'.exe$'
     regex2 = re.compile(pattern2)
-    filt_df['mask2'] = filt_df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
-    filtered_df = filt_df[filt_df['mask2'] == True]
-    filtered_df.drop(['mask', 'mask2'], axis=1, inplace=True)
+    new_df['mask2'] = new_df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
+    new_df = new_df[new_df['mask2'] == True]
+    new_df.drop(['mask', 'mask2'], axis=1, inplace=True)
 
-    filtered_df.to_csv('suspicious_' + mft_csv, index=True)
-
+    new_df.to_csv('suspicious_' + mft_csv, index=True)
 
 
 def look_for_timestomp(df):
 
+    new_df = df.copy()
+
     pattern = r'^.+(System32).+[.exe]$'
     regex1 = re.compile(pattern, flags=re.IGNORECASE)
-    df['mask'] = df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
-    filt_df = df[df['mask'] == True]
-    filt_df.drop(['mask'], axis=1, inplace=True)
-    filt_df.to_csv('timestomp_check_' + mft_csv, index=True)
+    new_df['mask'] = new_df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
+    new_df = new_df[new_df['mask'] == True]
+    new_df.drop(['mask'], axis=1, inplace=True)
+
+    new_df.to_csv('timestomp_check_' + mft_csv, index=True)
+
+
 
 
 """ 
@@ -192,34 +193,38 @@ occurrences of certain dates and/or times.
 """
 def filter_by_dates(df):
 
+    new_df = df.copy()
 
     if edate and sdate and etime and stime:
         s_stamp = pd.Timestamp(sdate + ' ' + stime)
         e_stamp = pd.Timestamp(edate + ' ' + etime)
-        filtered_df = df[s_stamp:e_stamp]
+        new_df = new_df[s_stamp:e_stamp]
     elif sdate and edate and etime and not stime:
         s_stamp = pd.Timestamp(sdate)
         e_stamp = pd.Timestamp(edate + ' ' + etime)
-        filtered_df = df[s_stamp:e_stamp]
+        new_df = new_df[s_stamp:e_stamp]
     elif sdate and edate and stime:
         s_stamp = pd.Timestamp(sdate + ' ' + stime)
         e_stamp = pd.Timestamp(edate)
-        filtered_df = df[s_stamp:e_stamp]
+        new_df = new_df[s_stamp:e_stamp]
     elif sdate and stime:
         s_stamp = pd.Timestamp(sdate + ' ' + stime)
-        filtered_df = df[s_stamp:]
+        new_df = new_df[s_stamp:]
     elif edate and etime:
         e_stamp = pd.Timestamp(edate + ' ' + etime)
-        filtered_df = df[:e_stamp]
+        new_df = new_df[:e_stamp]
     elif sdate:
         s_stamp = pd.Timestamp(sdate)
-        filtered_df = df[s_stamp:]
+        new_df = new_df[s_stamp:]
     elif edate:
         e_stamp = pd.Timestamp(edate)
-        filtered_df = df[:e_stamp]
+        new_df = new_df[:e_stamp]
     else:
         raise ValueError("You entered an invalid date to filter the table by or you did not include a date\n"
                          "to filter by. Please try again."
                          "\n\tExample Usage: $ python cleanMFT.py -f MFT.csv -r regex.csv -s 2015-06-08 -e 2015-06-30 -t 06:30:00 -u 06:31:20")
-    return filtered_df
 
+    new_df.to_csv('by_date' + mft_csv, index=True)
+
+
+run()
