@@ -12,13 +12,12 @@ export_file = sys.argv[2]
 
 df = pd.DataFrame()
 
-df = df.from_csv(import_file, sep=',', index_col='Date', parse_dates=True)
+df = df.from_csv(import_file, sep=',', index_col='Date')
 
-pattern = r'\.exe|\.rar|\.sys|\.jar|\.pref|\.lnk|\.bat'
+pattern = r'\.exe|\.rar|\.sys|\.jar|\.pf|\.lnk|\.bat'
 regex1 = re.compile(pattern, flags=re.IGNORECASE)
 df['mask'] = df[['File Name']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
 df = df[df['mask'] == True]
-
 pattern2 = r'm|b'
 regex2 = re.compile(pattern2, flags=re.IGNORECASE)
 
