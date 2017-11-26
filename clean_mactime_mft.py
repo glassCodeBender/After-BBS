@@ -1,230 +1,143 @@
-"""
-@Author: glassCodeBender
-@Date: 11/23/2007
-@Version: 1.0
-
-Program Purpose: This program helps forensic practitioners filter a Master File Table dumped into a csv file by mactime
-to only include the most useful file extensions, directories, or occurrences of certain viruses.
-
-I'll
-
-Example Usage:
-~$ python clean_mactime_mft.py filename_to_read.csv output_filename.csv
-
-"""
-
 import pandas as pd
 import re
 import sys
-import os
-import argparse
 
-if len(sys.argv) != 2:
-    print("You must include a filename to read and filename to output to for this program to work. ")
-    print("Usage: ~$ python clean_mactime_mft.py filename_to_read.csv output_filename.csv")
+"""
+Program to filter an MFT Body file in a variety of ways.
+Creates:
+File that includes cleaned up file that includes important extensions.
+File with prefetch and lnk files.
+Instances with the compiler
+A timeline with only true file names. 
+
+USAGE: ~$ python ExtractImportantExtensions.py file_to_read.csv file_to_write.csv
+"""
+
+import_file = sys.argv[1]
+export_file = sys.argv[2]
+
+if sys.argv != 2:
+    print("You need to supply two arguments for this program to work. The import filename and export filename.")
     sys.exit(1)
 
-# This should be added as a command line argument
-mft_csv = sys.argv[1]
-# Do we want to look for executables run outside of a standard directory.
-suspicious = True
-# Use the following to filter the mft by a time
-sdate = ''
-edate = ''
-stime = ''
-etime = ''
-# this should be included w/ argv
-output_file = sys.argv[2]
-# a boolean to determine if a numbered index should be added.
-index_bool = True
-# not sure what this is yet
-filter_index = ''
-reg_file = ''
+df = pd.DataFrame()
 
+df = df.from_csv(import_file, sep=',', index_col='Date')
 
-# This is the main method of the program.
-def run():
+# other extensions that might be useful.
+other_stuff = '\.pdf|\.ain|\.dbg|\.torrent\.ts'
 
-    # not going to worry about this section for now.
-    if filter_index:
-        sindex, eindex = [x.strip() for x in filter_index.split(',')]
+programming_stuff = '\.cbl|\.class|\.cob|\.cs$|\.cxx\.def\.di\.erl\.f$|\.m$|\.p$|\.pli|\.sym'
 
-        if sindex.contains(',') or eindex.contains(','):
-            sindex.replace(',', '')
-            eindex.replace(',', '')
+pattern = r'\.exe|\.rar|\.bi|\.ps|\.sys|\.jar|\.bcp|\.ctl|\.ctt|\.b|\.pf|\.rb|\.s$|\.swift|\.vbs +' \
+          r'|\.rs$|\.lnk|\.bat|compiler|tmp|\.c$|\.vb|\.cc|\.cp|\.scala|\.pl|.asm|\.sh|\.bash|\.com'
+regex1 = re.compile(pattern, flags=re.IGNORECASE)
+df['mask'] = df[['File Name']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
+df = df[df['mask'] == True]
 
-    if not sindex.isdigit and eindex.isdigit:
-        raise ValueError("ERROR: The index value you entered to filter the table by was improperly formatted. \n"
-                         "Please try to run the program again with different values.")
-    df = pd.DataFrame()
+pattern2 = r'm|b'
+regex2 = re.compile(pattern2, flags=re.IGNORECASE)
 
-    df = df.from_csv(mft_csv, sep=',', index_col='Date', parse_dates=True)
+df['mask2'] = df[['Type']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
+df = df[df['mask2'] == True]
+df.drop(['mask', 'mask2'], axis=1, inplace=True)
 
-    # df = df.from_csv("MftDump_2015-10-29_01-27-48.csv", sep='|')
-    # df_attack_date = df[df.index == '2013-12-03'] # Creates an extra df for the sake of reference
+normal_filter_filename = 'general_' + import_file
 
-    filter_by_extension(df)
-    # if reg_file:
-    #   df = filter_by_extension(df)
+df.to_csv(export_file, index=True)
 
-    if sdate or edate or stime or etime:
-        filter_by_dates(df)
-    if suspicious:
-        filter_suspicious(df)
-    if index_bool:
-        df.reset_index(level=0, inplace=True)
+# Create new df w/ only lnk and prefetch files.
 
-        # times need to be converted to do this.
-        if sindex and eindex:
-            df = df[sindex:eindex]
+lnkdf = pd.DataFrame()
 
-    df.to_csv(output_file, index=True)
+lnkdf = lnkdf.from_csv(import_file, sep=',', index_col='Date')
 
+pattern = r'\.lnk|\.pf|prefetch'
+regex1 = re.compile(pattern, flags=re.IGNORECASE)
+lnkdf['mask'] = lnkdf[['File Name']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
+lnkdf = lnkdf[lnkdf['mask'] == True]
+pattern2 = r'm|b'
+regex2 = re.compile(pattern2, flags=re.IGNORECASE)
 
-""" 
-Read a file line by line and return a list with items in each line.
-@Param A Filename
-@Return A list 
-"""
+lnkdf['mask2'] = lnkdf[['Type']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
+lnkdf = lnkdf[lnkdf['mask2'] == True]
+lnkdf.drop(['mask', 'mask2'], axis=1, inplace=True)
 
+lnk_filename = "lnk_" + export_file
 
-def read_file(file):
-    list = []
-    with open(file) as f:
-        for line in f:
-            list.append(line)
-    return list
+lnkdf.to_csv(lnk_filename, index=True)
 
+# Look for occurences of the word compiler and cmd.exe
 
-""" 
-Method to filter a list of words and concatenate them into a regex
-@Param List of words provided by user to alternative file.
-@Return String that will be concatenated to a regex. 
-"""
+compiler_df = pd.DataFrame()
 
+compiler_df = compiler_df.from_csv(import_file, sep=',', index_col='Date')
 
-def update_reg(list):
-    s = '|'
-    new_reg = s.join(list)
-    return new_reg
+pattern = r'compiler|cmd\.exe'
+regex1 = re.compile(pattern, flags=re.IGNORECASE)
+compiler_df['mask'] = compiler_df[['File Name']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
+compiler_df = compiler_df[compiler_df['mask'] == True]
+pattern2 = r'm|b'
+regex2 = re.compile(pattern2, flags=re.IGNORECASE)
 
+compiler_df['mask2'] = compiler_df[['Type']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
+compiler_df = compiler_df[compiler_df['mask2'] == True]
+compiler_df.drop(['mask', 'mask2'], axis=1, inplace=True)
 
-""" 
-Filters a MFT csv file that was converted into a DataFrame to only include relevant extensions.
-@Param: DataFrame 
-@Return: DataFrame - Filtered to only include relevant file extensions. 
-"""
+compiler_filename = 'compiler' + export_file
 
+compiler_df.to_csv(compiler_filename, index=True)
 
-def filter_by_extension(df):
+# Filter to only include System32 so we can verify timestomping.
 
-    user_reg = ''
+time_df = pd.DataFrame()
 
-    if reg_file:
-        reg_list = read_file(reg_file)
-        user_reg = update_reg(reg_list)
+time_df = time_df.from_csv(import_file, sep=',', index_col='Date')
 
-    if user_reg:
-        pattern = r'' + user_reg
-    else:
-        pattern = r'\.exe|\.rar|\.sys|\.jar|\.pref|\.lnk|\.bat'
+pattern = r'system32'
+regex1 = re.compile(pattern, flags=re.IGNORECASE)
+time_df['mask'] = time_df[['File Name']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
+time_df = time_df[time_df['mask'] == True]
+pattern2 = r'm|b'
+regex2 = re.compile(pattern2, flags=re.IGNORECASE)
 
-    regex1 = re.compile(pattern, flags=re.IGNORECASE)
-    df['mask'] = df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
-    filt_df = df[df['mask'] == True]
+time_df['mask2'] = time_df[['Type']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
+time_df = time_df[time_df['mask2'] == True]
+time_df.drop(['mask', 'mask2'], axis=1, inplace=True)
 
-# M – Modified Time A – Accessed Time C – Metadata (MFT) Changed Time B – Born Time (created)
+timestomp_filename = 'timestomp_' + export_file
 
-    # regex to filter by time file was created or accesse
-    pattern2 = r'm|b'
-    regex2 = re.compile(pattern2, flags=re.IGNORECASE)
+time_df.to_csv(timestomp_filename, index=True)
 
-    filt_df['mask2'] = filt_df[['Type']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
-    filtered_df = filt_df[filt_df['mask2'] == True]
-    filtered_df.drop(['mask', 'mask2'], axis=1, inplace=True)
+# Filter in way that gives us a true timeline of events
 
-    new_filename = 'by_ext_' + mft_csv
-    filtered_df.to_csv(new_filename, index=True)
+true_df = pd.DataFrame()
 
+true_df = true_df.from_csv(import_file, sep=',', index_col='Date')
 
-""" 
-Filters a MFT so that only the executables that were run outside Program Files are 
-included in the table. 
-@Param: DataFrame 
-@Return: DataFrame - Filtered to only include relevant file extensions. 
-"""
-def filter_suspicious(df):
+pattern = r'\.exe|\.rar|\.bi|\.ps|\.sys|\.jar|\.bcp|\.ctl|\.ctt|\.b|\.pf|\.rb|\.s$|\.swift|\.vbs +' \
+          r'|\.rs$|\.lnk|\.bat|compiler|tmp|\.c$|\.vb|\.cc|\.cp|\.scala|\.pl|.asm|\.sh|\.bash|\.com'
 
-    new_df = df.copy()
-    pattern = r'^.+(Program\sFiles|System32).+[.exe]$'
-    regex1 = re.compile(pattern)
-    new_df['mask'] = new_df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
-    new_df = new_df[new_df['mask'] == False]
+regex1 = re.compile(pattern, flags=re.IGNORECASE)
+true_df['mask'] = true_df[['File Name']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
+true_df = true_df[true_df['mask'] == True]
 
-    pattern2 = r'.exe$'
-    regex2 = re.compile(pattern2)
-    new_df['mask2'] = new_df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
-    new_df = new_df[new_df['mask2'] == True]
-    new_df.drop(['mask', 'mask2'], axis=1, inplace=True)
+pattern2 = r'm|b'
+regex2 = re.compile(pattern2, flags=re.IGNORECASE)
 
-    new_df.to_csv('suspicious_' + mft_csv, index=True)
+true_df['mask2'] = true_df[['Type']].apply(lambda x: x.str.contains(regex2, regex=True)).any(axis=1)
+true_df = true_df[true_df['mask2'] == True]
 
+pattern3 = r'FILE_NAME'
+regex3 = re.compile(pattern3)
 
-def look_for_timestomp(df):
+true_df['mask3'] = true_df[['File Name']].apply(lambda x: x.str.contains(regex3, regex=True)).any(axis=1)
+true_df = true_df[true_df['mask2'] == True]
 
-    new_df = df.copy()
+true_df.drop(['mask', 'mask2', 'mask3'], axis=1, inplace=True)
 
-    pattern = r'^.+(System32).+[.exe]$'
-    regex1 = re.compile(pattern, flags=re.IGNORECASE)
-    new_df['mask'] = new_df[['Filename', 'Desc']].apply(lambda x: x.str.contains(regex1, regex=True)).any(axis=1)
-    new_df = new_df[new_df['mask'] == True]
-    new_df.drop(['mask'], axis=1, inplace=True)
+true_timeline = 'timeline_' + export_file
 
-    new_df.to_csv('timestomp_check_' + mft_csv, index=True)
+true_df.to_csv(export_file, index=True)
 
-
-
-
-""" 
-Filters a MFT csv file that was converted into a Dataframe to only include the 
-occurrences of certain dates and/or times.
-@Param: DataFrame 
-@Return: DataFrame - Filtered to only include relevant virus names. 
-"""
-def filter_by_dates(df):
-
-    new_df = df.copy()
-
-    if edate and sdate and etime and stime:
-        s_stamp = pd.Timestamp(sdate + ' ' + stime)
-        e_stamp = pd.Timestamp(edate + ' ' + etime)
-        new_df = new_df[s_stamp:e_stamp]
-    elif sdate and edate and etime and not stime:
-        s_stamp = pd.Timestamp(sdate)
-        e_stamp = pd.Timestamp(edate + ' ' + etime)
-        new_df = new_df[s_stamp:e_stamp]
-    elif sdate and edate and stime:
-        s_stamp = pd.Timestamp(sdate + ' ' + stime)
-        e_stamp = pd.Timestamp(edate)
-        new_df = new_df[s_stamp:e_stamp]
-    elif sdate and stime:
-        s_stamp = pd.Timestamp(sdate + ' ' + stime)
-        new_df = new_df[s_stamp:]
-    elif edate and etime:
-        e_stamp = pd.Timestamp(edate + ' ' + etime)
-        new_df = new_df[:e_stamp]
-    elif sdate:
-        s_stamp = pd.Timestamp(sdate)
-        new_df = new_df[s_stamp:]
-    elif edate:
-        e_stamp = pd.Timestamp(edate)
-        new_df = new_df[:e_stamp]
-    else:
-        raise ValueError("You entered an invalid date to filter the table by or you did not include a date\n"
-                         "to filter by. Please try again."
-                         "\n\tExample Usage: $ python cleanMFT.py -f MFT.csv -r regex.csv -s 2015-06-08 -e 2015-06-30 -t 06:30:00 -u 06:31:20")
-
-    new_df.to_csv('by_date' + mft_csv, index=True)
-
-
-run()
+# Need to include program that uses the regex created by BBS Volatile IDS
